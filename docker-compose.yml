@@ -1,0 +1,65 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: ecmwf-minio
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: adminminio
+      MINIO_ADDRESS: ":10000"
+      MINIO_CONSOLE_ADDRESS: ":10001"
+    volumes:
+      - minio_data:/data
+    command: server /data --address ":10000" --console-address ":10001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ecmwf-net
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: ecmwf-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:10000 minioadmin adminminio;
+      mc mb local/ecmwf-data --ignore-existing;
+      echo 'Bucket ecmwf-data ready';
+      exit 0;
+      "
+    networks:
+      - ecmwf-net
+
+  ecmwf-loader:
+    build: .
+    container_name: ecmwf-loader
+    restart: unless-stopped
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      - MINIO_ENDPOINT=minio:10000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=adminminio
+      - MINIO_SECURE=false
+      - MINIO_BUCKET=ecmwf-data
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - ecmwf-net
+
+volumes:
+  minio_data:
+
+networks:
+  ecmwf-net:
+    driver: bridge
