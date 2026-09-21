@@ -1,0 +1,24 @@
+[project]
+name = "avtozagruzka-gribov"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Murathon", email = "muratov.nikolaj.gd@yandex.ru" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "lxml>=6.1.1",
+    "minio>=7.2.20",
+    "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
+    "schedule>=1.2.2",
+    "colorlog>=6.8.2",
+]
+
+[project.scripts]
+avtozagruzka-gribov = "avtozagruzka_gribov:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"

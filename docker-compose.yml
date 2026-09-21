@@ -1,0 +1,22 @@
+services:
+  ecmwf-loader:
+    build: .
+    container_name: ecmwf-loader
+    restart: unless-stopped
+    environment:
+      # ВАЖНО: Замените 'gis_loader_minio' на реальное имя сервиса MinIO в вашем основном docker-compose
+      # Если не уверены, посмотрите в основном проекте, как называется контейнер с minio (без префикса проекта)
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-gis_loader_minio:10000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-adminminio}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - MINIO_BUCKET=${MINIO_BUCKET:-ecmwf-data}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - stribog3
+
+networks:
+  stribog3:
+    external: true
