@@ -1,11 +1,9 @@
-"""
-Конфигурация приложения
-"""
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Загружаем переменные из .env файла
+# переменные из .env файла
 load_dotenv()
 
 # Базовые пути
@@ -13,14 +11,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 LOGS_DIR = BASE_DIR / "logs"
 TEMP_DIR = BASE_DIR / "temp"
 
-# Создаем директории если их нет
 LOGS_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 
-# Настройки ECMWF
+# ECMWF
 ECMWF_BASE_URL = os.getenv("ECMWF_BASE_URL", "https://data.ecmwf.int/forecasts")
 
-# Настройки Minio
+# Minio
 MINIO_CONFIG = {
     "endpoint": os.getenv("MINIO_ENDPOINT", "minio:10000"),
     "access_key": os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
