@@ -1,24 +1,9 @@
 
-## Установка Docker (если нет)
 
-### 
-sudo apt update
-sudo apt install -y docker.io docker-compose-v2
-sudo usermod -aG docker $USER
-newgrp docker
-
-
-
-
-
-# 1. Разархивировать
-tar -xzf ecmwf-minio-loader.tar.gz
-cd ecmwf-minio-loader
-
-# 2. Запустить
+Запустить
 docker compose up -d
 
-# 3. Проверить логи
+Проверить логи
 docker compose logs -f ecmwf-loader
 
 
@@ -45,38 +30,9 @@ docker compose up -d
 bash
 docker compose run --rm ecmwf-loader python3 main.py --once --date 20260803
 
-3. Локальный запуск (без Docker)
-bash
-pip install -r requirements.txt
-# Изменить MINIO_ENDPOINT в .env на localhost:10000
-python3 main.py --once --date 20260803
-
-
-Доступ к Minio
-Minio API	http://localhost:10000	minioadmin	adminminio
-
-
-
-Управление
-# Статус контейнеров
-docker compose ps
 
 # Логи
 docker compose logs -f ecmwf-loader
 
-# Остановка
-docker compose down
-
 # Остановка с удалением данных Minio
 docker compose down -v
-
-# Пересборка после изменений кода
-docker compose build ecmwf-loader && docker compose up -d
-
- 
-
-При распаковке 
-
-tar -xzf ecmwf-minio-loader.tar.gz
-cd ecmwf-minio-loader
-docker compose up -d
