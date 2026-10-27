@@ -9,7 +9,6 @@ import httpx
 from common_stribog3.minio_client.async_minio_client import AsyncMinioClient
 
 from app.config import Settings
-from app.minio_store import MinioStore
 
 logger = logging.getLogger(__name__)
 
