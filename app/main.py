@@ -1,20 +1,18 @@
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException
 from common_stribog3.minio_client.async_minio_client import MinioData, AsyncMinioClient
+from common_stribog3.logger import Logger
 
 from app.config import get_settings
 from app.ecmwf import ECMWFDownloader
-from app.logging_config import configure_logging
 
 settings = get_settings()
-configure_logging(settings.log_level)
 
-logger = logging.getLogger(__name__)
+logger = Logger(__name__, settings.log_level)
 
 state: dict[str, Any] = {
     "running": False,

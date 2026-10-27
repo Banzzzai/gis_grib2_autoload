@@ -1,4 +1,4 @@
-
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+LogLevelStr = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -43,9 +44,7 @@ class Settings(BaseSettings):
     temp_dir: Path = Path("/tmp/ecmwf-downloads")
 
     # Logging
-    log_level: Literal[
-        "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
-    ] = "INFO"
+    log_level: int = Field(default=logging.INFO)
 
     # FastAPI
     api_host: str = "0.0.0.0"
@@ -80,6 +79,16 @@ class Settings(BaseSettings):
     @property
     def normalized_base_url(self) -> str:
         return self.ecmwf_base_url.rstrip("/")
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def convert_str_to_logging_int(cls, v):
+        if isinstance(v, str):
+            level = logging.getLevelName(v.upper())
+            if isinstance(level, int):
+                return level
+            raise ValueError(f"Некорректный уровень логирования: {v}")
+        return v
 
 
 @lru_cache(maxsize=1)
