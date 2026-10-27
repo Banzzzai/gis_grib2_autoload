@@ -17,24 +17,24 @@ class Settings(BaseSettings):
     )
 
     # ECMWF
-    ecmwf_base_url: str = "https://data.ecmwf.int/forecasts"
+    ecmwf_base_url: str = Field(default="https://data.ecmwf.int/forecasts")
     ecmwf_lookback_days: int = Field(default=3, ge=1, le=7)
     poll_interval_seconds: int = Field(default=21600, ge=60)
     time_slots: list[str] = Field(
         default_factory=lambda: ["00z", "06z", "12z", "18z"]
     )
-    model: str = "ifs"
-    resolution: str = "0p25"
+    model: str = Field(default="ifs")
+    resolution: str = Field(default="0p25")
     target_folders: list[str] = Field(default_factory=lambda: ["oper"])
 
     # MinIO
-    minio_host: str = "minio"
-    minio_port: int = 10000
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "adminminio"
-    minio_secure: bool = False
-    minio_bucket: str = "ecmwf-data"
-    minio_region: str = "us-east-1"
+    minio_host: str = Field(default="minio")
+    minio_port: int = Field(default=10000)
+    minio_access_key: str = Field(default="minioadmin")
+    minio_secret_key: str = Field(default="adminminio")
+    minio_secure: bool = Field(default=False)
+    minio_bucket: str = Field(default="ecmwf-data")
+    minio_region: str = Field(default="us-east-1")
 
     # Download
     max_parallel_downloads: int = Field(default=20, ge=1, le=100)
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     log_level: int = Field(default=logging.INFO)
 
     # FastAPI
-    api_host: str = "0.0.0.0"
+    api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8080, ge=1, le=65535)
 
     @field_validator("time_slots")
