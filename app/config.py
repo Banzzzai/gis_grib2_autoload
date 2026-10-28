@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     minio_access_key: str = Field(default="minioadmin")
     minio_secret_key: str = Field(default="adminminio")
     minio_secure: bool = Field(default=False)
-    minio_bucket: str = Field(default="ecmwf-data")
+    minio_bucket: str = Field(default="ecmwf-grib2")
+    minio_wave_bucket: str = Field(default="ecmwf-wave-grib2")
     minio_region: str = Field(default="us-east-1")
 
     # Download

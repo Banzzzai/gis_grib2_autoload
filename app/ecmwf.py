@@ -129,12 +129,33 @@ class ECMWFDownloader:
 
         return key
 
+    def _bucket_for_url(self, source_url: str) -> str:
+        path_parts = urlparse(source_url).path.strip("/").split("/")
+
+        if len(path_parts) < 2:
+            raise ValueError(f"Cannot determine ECMWF stream: {source_url}")
+
+        stream = path_parts[-2]
+
+        bucket_by_stream = {
+            "oper": self.settings.minio_bucket,
+            "wave": self.settings.minio_wave_bucket,
+        }
+
+        try:
+            return bucket_by_stream[stream]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported ECMWF stream {stream!r}: {source_url}"
+            ) from exc
+
     async def _download_one(self, source_url: str) -> bool:
         async with self.semaphore:
             key = self._object_key(source_url)
+            bucket = self._bucket_for_url(source_url)
 
             try:
-                if await self.store.exists_object(self.settings.minio_bucket, key):
+                if await self.store.exists_object(bucket, key):
                     logger.debug("Already in MinIO: %s", key)
                     return False
 
@@ -212,7 +233,7 @@ class ECMWFDownloader:
 
                     size = temp_path.stat().st_size
 
-                    await self.store.add_object(self.settings.minio_bucket, key, temp_path)
+                    await self.store.add_object(bucket, key, temp_path)
 
                     logger.info(
                         "Uploaded %s (%d bytes)",
@@ -231,11 +252,65 @@ class ECMWFDownloader:
                 )
                 return False
 
+    @staticmethod
+    def _forecast_valid_time(source_url: str) -> datetime | None:
+        parsed = urlparse(source_url)
+        filename = parsed.path.rsplit("/", 1)[-1]
+
+        # Шаг прогноза: например, 0h, 3h, 12h или 2d.
+        match = re.search(
+            r"-(\d+)([hd]?)-(oper|wave)-fc(?:\.|$)",
+            filename,
+            re.IGNORECASE,
+        )
+
+        if not match:
+            logger.debug("Cannot parse forecast step: %s", filename)
+            return None
+
+        step = int(match.group(1))
+        unit = match.group(2).lower()
+
+        if unit == "d":
+            step *= 24
+
+        parts = parsed.path.strip("/").split("/")
+
+        try:
+            filename_index = len(parts) - 1
+            stream_index = filename_index - 1
+
+            stream = parts[stream_index]
+            cycle_text = parts[stream_index - 3]
+            date_text = parts[stream_index - 4]
+
+            if stream not in {"oper", "wave"}:
+                return None
+
+            if not re.fullmatch(r"\d{8}", date_text):
+                return None
+
+            if not re.fullmatch(r"\d{2}z", cycle_text, re.IGNORECASE):
+                return None
+
+            initialization = datetime.strptime(
+                f"{date_text}{cycle_text[:2]}",
+                "%Y%m%d%H",
+            ).replace(tzinfo=UTC)
+
+            return initialization + timedelta(hours=step)
+
+        except (ValueError, IndexError):
+            logger.debug("Cannot determine forecast time: %s", source_url)
+            return None
+
+
     async def run_once(self) -> dict[str, int]:
         now = datetime.now(UTC)
+        current_date = now.date()
 
         dates = [
-            (now.date() - timedelta(days=offset)).strftime("%Y%m%d")
+            (current_date - timedelta(days=offset)).strftime("%Y%m%d")
             for offset in range(self.settings.ecmwf_lookback_days)
         ]
 
@@ -273,17 +348,60 @@ class ECMWFDownloader:
                             directory,
                         )
 
-        candidates = sorted(set(candidates))
+        # Оставляем только файлы, время прогноза которых удалось определить.
+        valid_candidates: list[tuple[str, str, datetime]] = []
+
+        for url in set(candidates):
+            path_parts = urlparse(url).path.strip("/").split("/")
+            if len(path_parts) < 2:
+                continue
+
+            stream = path_parts[-2]
+            if stream not in {"oper", "wave"}:
+                continue
+
+            valid_time = self._forecast_valid_time(url)
+            if valid_time is None:
+                continue
+
+            # Включаем прогнозы из предыдущего цикла, если они
+            # действительны сегодня, но не выбираем будущие часы.
+            if valid_time.date() != current_date or valid_time > now:
+                continue
+
+            valid_candidates.append((url, stream, valid_time))
+
+        # Для каждого потока определяем последний доступный час.
+        latest_by_stream: dict[str, datetime] = {}
+
+        for _, stream, valid_time in valid_candidates:
+            previous = latest_by_stream.get(stream)
+            if previous is None or valid_time > previous:
+                latest_by_stream[stream] = valid_time
+
+        selected = [
+            url
+            for url, stream, valid_time in valid_candidates
+            if valid_time == latest_by_stream.get(stream)
+        ]
+
+        selected.sort()
+
+        for stream, valid_time in latest_by_stream.items():
+            logger.info(
+                "Selected latest forecast for %s: %s UTC",
+                stream,
+                valid_time.isoformat(),
+            )
 
         logger.info(
-            "Discovery finished: %d candidate files",
+            "Discovery finished: %d candidate files, %d selected",
             len(candidates),
+            len(selected),
         )
 
-        # Semaphore ограничивает число активных скачиваний.
-        # Исключения отдельных файлов не отменяют обработку остальных.
         results = await asyncio.gather(
-            *(self._download_one(url) for url in candidates),
+            *(self._download_one(url) for url in selected),
             return_exceptions=True,
         )
 
@@ -295,6 +413,7 @@ class ECMWFDownloader:
 
         return {
             "discovered": len(candidates),
+            "selected": len(selected),
             "uploaded": uploaded,
             "failed": failed,
             "finished_at_epoch": int(datetime.now(UTC).timestamp()),

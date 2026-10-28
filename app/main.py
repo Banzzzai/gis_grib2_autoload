@@ -65,8 +65,13 @@ async def lifespan(app: FastAPI):
     )
     minio_client = AsyncMinioClient(store_data)
     # Проверяем доступность MinIO при запуске.
-    if not await minio_client.exists_bucket(settings.minio_bucket):
-        await minio_client.create_bucket(settings.minio_bucket)
+    for bucket in {
+        settings.minio_bucket,
+        settings.minio_wave_bucket,
+    }:
+        if not await minio_client.exists_bucket(bucket):
+            await minio_client.create_bucket(bucket)
+            logger.info("Created MinIO bucket: %s", bucket)
 
     timeout = httpx.Timeout(settings.http_timeout_seconds)
 
