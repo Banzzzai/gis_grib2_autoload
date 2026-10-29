@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     ecmwf_base_url: str = Field(default="https://data.ecmwf.int/forecasts")
     ecmwf_lookback_days: int = Field(default=3, ge=1, le=7)
     poll_interval_seconds: int = Field(default=21600, ge=60)
+    ecmwf_cycle_delay_hours: int = Field(default=11, ge=0, le=24)
     time_slots: list[str] = Field(
         default_factory=lambda: ["00z", "06z", "12z", "18z"]
     )

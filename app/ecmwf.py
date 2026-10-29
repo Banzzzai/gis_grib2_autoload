@@ -130,12 +130,12 @@ class ECMWFDownloader:
         return key
 
     def _bucket_for_url(self, source_url: str) -> str:
-        path_parts = urlparse(source_url).path.strip("/").split("/")
+        parts = urlparse(source_url).path.strip("/").split("/")
 
-        if len(path_parts) < 2:
-            raise ValueError(f"Cannot determine ECMWF stream: {source_url}")
+        if len(parts) < 2:
+            raise ValueError(f"Unexpected ECMWF URL: {source_url}")
 
-        stream = path_parts[-2]
+        stream = parts[-2]
 
         bucket_by_stream = {
             "oper": self.settings.minio_bucket,
@@ -146,7 +146,7 @@ class ECMWFDownloader:
             return bucket_by_stream[stream]
         except KeyError as exc:
             raise ValueError(
-                f"Unsupported ECMWF stream {stream!r}: {source_url}"
+                f"Unsupported ECMWF stream: {stream}"
             ) from exc
 
     async def _download_one(self, source_url: str) -> bool:
@@ -156,7 +156,7 @@ class ECMWFDownloader:
 
             try:
                 if await self.store.exists_object(bucket, key):
-                    logger.debug("Already in MinIO: %s", key)
+                    logger.debug("Already in MinIO: %s/%s", bucket, key)
                     return False
 
                 filename = re.sub(
@@ -166,20 +166,18 @@ class ECMWFDownloader:
                 )
 
                 temp_path = (
-                    self.settings.temp_dir
-                    / f"{filename}.{datetime.now(UTC).timestamp():.6f}.part"
+                        self.settings.temp_dir
+                        / f"{filename}.{datetime.now(UTC).timestamp():.6f}.part"
                 )
 
                 try:
-                    # Повторяем именно скачивание, а не загружаем
-                    # повторно весь объект в оперативную память.
                     for attempt in range(self.settings.retry_count + 1):
                         temp_path.unlink(missing_ok=True)
 
                         try:
                             async with self.http.stream(
-                                "GET",
-                                source_url,
+                                    "GET",
+                                    source_url,
                             ) as response:
                                 if response.status_code == 404:
                                     logger.info(
@@ -197,24 +195,24 @@ class ECMWFDownloader:
 
                                 with temp_path.open("wb") as output:
                                     async for chunk in response.aiter_bytes(
-                                        1024 * 1024
+                                            1024 * 1024
                                     ):
                                         output.write(chunk)
 
                             break
 
                         except (
-                            httpx.TimeoutException,
-                            httpx.NetworkError,
-                            httpx.HTTPStatusError,
+                                httpx.TimeoutException,
+                                httpx.NetworkError,
+                                httpx.HTTPStatusError,
                         ):
                             if attempt >= self.settings.retry_count:
                                 raise
 
                             delay = (
-                                self.settings.retry_backoff_seconds
-                                * (2 ** attempt)
-                                + random.uniform(0, 0.5)
+                                    self.settings.retry_backoff_seconds
+                                    * (2 ** attempt)
+                                    + random.uniform(0, 0.5)
                             )
 
                             logger.warning(
@@ -233,10 +231,15 @@ class ECMWFDownloader:
 
                     size = temp_path.stat().st_size
 
-                    await self.store.add_object(bucket, key, temp_path)
+                    await self.store.add_object(
+                        bucket,
+                        key,
+                        temp_path,
+                    )
 
                     logger.info(
-                        "Uploaded %s (%d bytes)",
+                        "Uploaded %s/%s (%d bytes)",
+                        bucket,
                         key,
                         size,
                     )
@@ -304,104 +307,108 @@ class ECMWFDownloader:
             logger.debug("Cannot determine forecast time: %s", source_url)
             return None
 
-
     async def run_once(self) -> dict[str, int]:
         now = datetime.now(UTC)
-        current_date = now.date()
+        cutoff = now - timedelta(
+            hours=self.settings.ecmwf_cycle_delay_hours
+        )
 
-        dates = [
-            (current_date - timedelta(days=offset)).strftime("%Y%m%d")
-            for offset in range(self.settings.ecmwf_lookback_days)
-        ]
+        # Ищем последний цикл, который уже достиг порога готовности.
+        available_cycles: list[datetime] = []
+
+        for offset in range(self.settings.ecmwf_lookback_days):
+            cycle_date = now.date() - timedelta(days=offset)
+
+            for slot in self.settings.time_slots:
+                cycle_hour = int(slot[:2])
+
+                cycle_time = datetime(
+                    cycle_date.year,
+                    cycle_date.month,
+                    cycle_date.day,
+                    cycle_hour,
+                    tzinfo=UTC,
+                )
+
+                if cycle_time <= cutoff:
+                    available_cycles.append(cycle_time)
+
+        if not available_cycles:
+            logger.warning(
+                "No eligible ECMWF cycle found before %s",
+                cutoff.isoformat(),
+            )
+            return {
+                "discovered": 0,
+                "selected": 0,
+                "uploaded": 0,
+                "failed": 0,
+                "finished_at_epoch": int(datetime.now(UTC).timestamp()),
+            }
+
+        selected_cycle = max(available_cycles)
+        date_text = selected_cycle.strftime("%Y%m%d")
+        cycle_text = selected_cycle.strftime("%H") + "z"
+
+        logger.info(
+            "Selected ECMWF cycle: date=%s cycle=%s "
+            "(cycle time: %s, readiness cutoff: %s)",
+            date_text,
+            cycle_text,
+            selected_cycle.isoformat(),
+            cutoff.isoformat(),
+        )
 
         candidates: list[str] = []
 
-        for date_text in dates:
-            for cycle in self.settings.time_slots:
-                for stream in self.settings.target_folders:
-                    directory = (
-                        f"{self.settings.normalized_base_url}/"
-                        f"{date_text}/{cycle}/{self.settings.model}/"
-                        f"{self.settings.resolution}/{stream}/"
-                    )
-
-                    try:
-                        urls = await self.list_grib_files(directory)
-                        candidates.extend(urls)
-
-                    except httpx.HTTPStatusError as exc:
-                        if exc.response.status_code == 404:
-                            logger.debug(
-                                "Directory not published yet: %s",
-                                directory,
-                            )
-                        else:
-                            logger.warning(
-                                "Could not list %s: %s",
-                                directory,
-                                exc,
-                            )
-
-                    except Exception:
-                        logger.exception(
-                            "Could not list ECMWF directory: %s",
-                            directory,
-                        )
-
-        # Оставляем только файлы, время прогноза которых удалось определить.
-        valid_candidates: list[tuple[str, str, datetime]] = []
-
-        for url in set(candidates):
-            path_parts = urlparse(url).path.strip("/").split("/")
-            if len(path_parts) < 2:
-                continue
-
-            stream = path_parts[-2]
-            if stream not in {"oper", "wave"}:
-                continue
-
-            valid_time = self._forecast_valid_time(url)
-            if valid_time is None:
-                continue
-
-            # Включаем прогнозы из предыдущего цикла, если они
-            # действительны сегодня, но не выбираем будущие часы.
-            if valid_time.date() != current_date or valid_time > now:
-                continue
-
-            valid_candidates.append((url, stream, valid_time))
-
-        # Для каждого потока определяем последний доступный час.
-        latest_by_stream: dict[str, datetime] = {}
-
-        for _, stream, valid_time in valid_candidates:
-            previous = latest_by_stream.get(stream)
-            if previous is None or valid_time > previous:
-                latest_by_stream[stream] = valid_time
-
-        selected = [
-            url
-            for url, stream, valid_time in valid_candidates
-            if valid_time == latest_by_stream.get(stream)
-        ]
-
-        selected.sort()
-
-        for stream, valid_time in latest_by_stream.items():
-            logger.info(
-                "Selected latest forecast for %s: %s UTC",
-                stream,
-                valid_time.isoformat(),
+        # Скачиваем все GRIB-файлы только из выбранного цикла.
+        for stream in self.settings.target_folders:
+            directory = (
+                f"{self.settings.normalized_base_url}/"
+                f"{date_text}/{cycle_text}/{self.settings.model}/"
+                f"{self.settings.resolution}/{stream}/"
             )
 
+            try:
+                urls = await self.list_grib_files(directory)
+                candidates.extend(urls)
+
+                logger.info(
+                    "Discovered %d GRIB files for stream=%s, cycle=%s",
+                    len(urls),
+                    stream,
+                    cycle_text,
+                )
+
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    logger.warning(
+                        "ECMWF directory not published: %s",
+                        directory,
+                    )
+                else:
+                    logger.exception(
+                        "Could not list ECMWF directory: %s",
+                        directory,
+                    )
+
+            except Exception:
+                logger.exception(
+                    "Could not list ECMWF directory: %s",
+                    directory,
+                )
+
+        candidates = sorted(set(candidates))
+
         logger.info(
-            "Discovery finished: %d candidate files, %d selected",
+            "Discovery finished: %d candidate files for cycle %s/%s",
             len(candidates),
-            len(selected),
+            date_text,
+            cycle_text,
         )
 
         results = await asyncio.gather(
-            *(self._download_one(url) for url in selected),
+            *(self._download_one(url) for url in candidates),
             return_exceptions=True,
         )
 
@@ -413,7 +420,7 @@ class ECMWFDownloader:
 
         return {
             "discovered": len(candidates),
-            "selected": len(selected),
+            "selected": len(candidates),
             "uploaded": uploaded,
             "failed": failed,
             "finished_at_epoch": int(datetime.now(UTC).timestamp()),
